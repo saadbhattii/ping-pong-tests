@@ -1,0 +1,92 @@
+name: watchdog
+
+on:
+  schedule:
+    # Loose on purpose — this only needs to catch a dead chain
+    # eventually, not on a tight timer. Offset from the top of the
+    # hour (:17 instead of :00) to avoid GitHub's busiest queue moment.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      restart_hops:
+        description: "Hops to seed the chain with if it's found dead"
+        required: false
+        default: "20"
+
+permissions:
+  contents: write   # required by the keepalive step to push a marker commit
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prevent this workflow's own schedule from being disabled after 60 quiet days
+        uses: gautamkrishnar/keepalive-workflow@v2
+
+  check-and-restart:
+    runs-on: ubuntu-latest
+    needs: keepalive
+    steps:
+      - name: Check chain freshness, restart if stale
+        env:
+          GH_TOKEN: ${{ secrets.PING_PONG_TOKEN }}
+          RESTART_HOPS: ${{ inputs.restart_hops || '20' }}
+          STALE_AFTER_SECONDS: "3600"   # 1 hour — tune to taste
+        run: |
+          repo="${{ github.repository }}"
+          latest_ts=""
+
+          # Check both workflows individually and keep whichever
+          # completed most recently. Deliberately does NOT look at
+          # "is anything running right now" — that's normal to be
+          # empty between hops and would give false positives.
+          for wf in ping.yml pong.yml; do
+            ts=$(curl -s \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$repo/actions/workflows/$wf/runs?status=completed&per_page=1" \
+              | jq -r '.workflow_runs[0].updated_at // empty')
+
+            echo "Most recent completed $wf run: ${ts:-none found}"
+
+            if [ -n "$ts" ] && { [ -z "$latest_ts" ] || [[ "$ts" > "$latest_ts" ]]; }; then
+              latest_ts="$ts"
+            fi
+          done
+
+          should_restart=false
+
+          if [ -z "$latest_ts" ]; then
+            echo "⚠ No completed ping/pong runs found at all — seeding the chain for the first time."
+            should_restart=true
+          else
+            latest_epoch=$(date -u -d "$latest_ts" +%s)
+            now_epoch=$(date -u +%s)
+            elapsed=$((now_epoch - latest_epoch))
+            echo "Last chain activity: $latest_ts ($elapsed seconds ago)"
+
+            if [ "$elapsed" -gt "$STALE_AFTER_SECONDS" ]; then
+              echo "⚠ Chain is stale (idle longer than ${STALE_AFTER_SECONDS}s) — restarting."
+              should_restart=true
+            else
+              echo "✓ Chain is alive — nothing to do."
+            fi
+          fi
+
+          if [ "$should_restart" = true ]; then
+            response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$repo/actions/workflows/ping.yml/dispatches" \
+              -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"hops\":\"$RESTART_HOPS\"}}")
+
+            if [ "$response" -eq 204 ]; then
+              echo "→ Restarted chain via ping.yml (hops=$RESTART_HOPS)"
+            else
+              echo "✗ Failed to restart chain, HTTP $response"
+              exit 1
+            fi
+          fi

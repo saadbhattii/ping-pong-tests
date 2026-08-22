@@ -1,0 +1,41 @@
+name: pong
+
+on:
+  workflow_dispatch:
+    inputs:
+      hops:
+        description: "Remaining hops before the chain stops (safety cap)"
+        required: false
+        default: "5"
+
+jobs:
+  pong:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log and maybe continue the chain
+        env:
+          GH_TOKEN: ${{ secrets.PING_PONG_TOKEN }}
+          HOPS: ${{ inputs.hops }}
+        run: |
+          echo "🏓 PONG fired at $(date -u +%Y-%m-%dT%H:%M:%SZ) — hops remaining: $HOPS"
+
+          if [ "$HOPS" -le 0 ]; then
+            echo "Hop limit reached — chain stops here."
+            exit 0
+          fi
+
+          NEXT=$((HOPS - 1))
+
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/ping.yml/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"hops\":\"$NEXT\"}}")
+
+          if [ "$response" -eq 204 ]; then
+            echo "→ ping.yml dispatched successfully (hops=$NEXT)"
+          else
+            echo "⚠ dispatch failed, HTTP $response — chain stops here"
+            exit 1
+          fi

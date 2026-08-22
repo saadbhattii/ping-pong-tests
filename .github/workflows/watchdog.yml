@@ -21,9 +21,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Prevent this workflow's own schedule from being disabled after 60 quiet days
-        uses: gautamkrishnar/keepalive-workflow@v2
+        run: |
+          last_commit_epoch=$(git log -1 --format=%ct)
+          now_epoch=$(date -u +%s)
+          days_quiet=$(( (now_epoch - last_commit_epoch) / 86400 ))
+
+          echo "Repo has been quiet for $days_quiet day(s)."
+
+          if [ "$days_quiet" -ge 45 ]; then
+            echo "Approaching the 60-day auto-disable threshold — pushing a keepalive commit."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/.keepalive
+            git add .github/.keepalive
+            git commit -m "chore: keepalive"
+            git push
+          else
+            echo "No action needed yet."
+          fi
 
   check-and-restart:
     runs-on: ubuntu-latest

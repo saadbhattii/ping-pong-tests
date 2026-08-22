@@ -12,18 +12,28 @@ jobs:
   pong:
     runs-on: ubuntu-latest
     steps:
-      - name: Log and maybe continue the chain
+      - name: Log arrival
         env:
-          GH_TOKEN: ${{ secrets.PING_PONG_TOKEN }}
           HOPS: ${{ inputs.hops }}
         run: |
           echo "🏓 PONG fired at $(date -u +%Y-%m-%dT%H:%M:%SZ) — hops remaining: $HOPS"
 
           if [ "$HOPS" -le 0 ]; then
             echo "Hop limit reached — chain stops here."
-            exit 0
           fi
 
+      - name: Cooldown window (cancel here to stop the chain)
+        if: ${{ inputs.hops > 0 }}
+        run: |
+          echo "Waiting 10s before dispatching ping.yml — cancel this run now to break the chain."
+          sleep 10
+
+      - name: Trigger ping
+        if: ${{ inputs.hops > 0 }}
+        env:
+          GH_TOKEN: ${{ secrets.PING_PONG_TOKEN }}
+          HOPS: ${{ inputs.hops }}
+        run: |
           NEXT=$((HOPS - 1))
 
           response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \

@@ -11,7 +11,7 @@ on:
       restart_hops:
         description: "Hops to seed the chain with if it's found dead"
         required: false
-        default: "20"
+        default: "5"
 
 permissions:
   contents: write   # required by the keepalive step to push a marker commit

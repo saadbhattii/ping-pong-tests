@@ -1,11 +1,9 @@
 name: watchdog
 
 on:
-  schedule:
     # Loose on purpose — this only needs to catch a dead chain
     # eventually, not on a tight timer. Offset from the top of the
-    # hour (:17 instead of :00) to avoid GitHub's busiest queue moment.
-    - cron: "*/5 * * * *"
+    # hour (:17 instead of :00) to avoid GitHub's busiest queue moment
   workflow_dispatch:
     inputs:
       restart_hops:
